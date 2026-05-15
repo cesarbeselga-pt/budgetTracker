@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Monthly Budget Tracker</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #111827; color: #f9fafb; font-family: sans-serif; }
+    input, select, button { font-family: sans-serif; }
+    ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #1f2937; } ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const CATEGORIES = ["Housing","Food","Transport","Entertainment","Health","Shopping","Other"];
+    const CAT_COLORS = ["#6366f1","#f59e0b","#10b981","#ec4899","#3b82f6","#f97316","#8b5cf6"];
+    const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+    const fmtMoney = n => "€" + Number(n).toFixed(2);
+    const nowKey = () => { const d = new Date(); return `${d.getFullYear()}-${d.getMonth()}`; };
+    const keyToLabel = k => { const [y,m] = k.split("-"); return `${MONTHS[+m]} ${y}`; };
+    const defaultBudget = () => ({ total: 2000, cats: Object.fromEntries(CATEGORIES.map(c => [c, 300])) });
+    const defaultData = () => ({ budget: defaultBudget(), expenses: [] });
+
+    function PieChart({ expenses }) {
+      const canvasRef = useRef();
+      useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext("2d");
+        const W = canvas.width, H = canvas.height;
+        ctx.clearRect(0, 0, W, H);
+        const totals = CATEGORIES.map(c => expenses.filter(e => e.cat === c).reduce((s, e) => s + e.amt, 0));
+        const grand = totals.reduce((a, b) => a + b, 0);
+        if (grand === 0) {
+          ctx.fillStyle = "#374151"; ctx.beginPath(); ctx.arc(W/2, H/2, H/2-10, 0, Math.PI*2); ctx.fill();
+          ctx.fillStyle = "#9ca3af"; ctx.font = "14px sans-serif"; ctx.textAlign = "center"; ctx.fillText("No expenses yet", W/2, H/2+5);
+          return;
+        }
+        let start = -Math.PI/2;
+        totals.forEach((val, i) => {
+          if (!val) return;
+          const slice = (val/grand)*Math.PI*2;
+          ctx.beginPath(); ctx.moveTo(W/2, H/2); ctx.arc(W/2, H/2, H/2-10, start, start+slice); ctx.closePath();
+          ctx.fillStyle = CAT_COLORS[i]; ctx.fill();
+          ctx.strokeStyle = "#1f2937"; ctx.lineWidth = 2; ctx.stroke();
+          start += slice;
+        });
+        ctx.beginPath(); ctx.arc(W/2, H/2, H/4, 0, Math.PI*2); ctx.fillStyle = "#1f2937"; ctx.fill();
+        ctx.fillStyle = "#f9fafb"; ctx.font = "bold 15px sans-serif"; ctx.textAlign = "center"; ctx.fillText(fmtMoney(grand), W/2, H/2-4);
+        ctx.font = "11px sans-serif"; ctx.fillStyle = "#9ca3af"; ctx.fillText("spent", W/2, H/2+13);
+      }, [expenses]);
+      return React.createElement("canvas", { ref: canvasRef, width: 200, height: 200 });
+    }
+
+    function App() {
+      const [tab, setTab] = useState("tracker");
+      const [monthKey, setMonthKey] = useState(nowKey());
+      const [allData, setAllData] = useState({});
+      const [form, setForm] = useState({ name:"", amt:"", cat: CATEGORIES[0] });
+      const [editBudget, setEditBudget] = useState(false);
+      const [budgetDraft, setBudgetDraft] = useState(null);
+
+      useEffect(() => {
+        try { const saved = localStorage.getItem("budget_all_data"); if (saved) setAllData(JSON.parse(saved)); } catch {}
+      }, []);
+
+      const save = (next) => { setAllData(next); try { localStorage.setItem("budget_all_data", JSON.stringify(next)); } catch {} };
+      const data = allData[monthKey] || defaultData();
+      const { budget, expenses } = data;
+      const setData = d => save({ ...allData, [monthKey]: d });
+
+      const totalSpent = expenses.reduce((s,e) => s+e.amt, 0);
+      const catTotals = Object.fromEntries(CATEGORIES.map(c => [c, expenses.filter(e=>e.cat===c).reduce((s,e)=>s+e.amt,0)]));
+
+      const addExpense = () => {
+        if (!form.name || !form.amt || isNaN(+form.amt) || +form.amt <= 0) return;
+        const e = { id: Date.now(), name: form.name, amt: +form.amt, cat: form.cat, date: new Date().toLocaleDateString() };
+        setData({ ...data, expenses: [...expenses, e] });
+        setForm({ name:"", amt:"", cat: CATEGORIES[0] });
+      };
+
+      const delExpense = id => setData({ ...data, expenses: expenses.filter(e=>e.id!==id) });
+      const openBudgetEdit = () => { setBudgetDraft(JSON.parse(JSON.stringify(budget))); setEditBudget(true); };
+      const saveBudget = () => {
+        const total = CATEGORIES.reduce((s,c) => s + (budgetDraft.cats[c]||0), 0);
+        setData({ ...data, budget: { ...budgetDraft, total } });
+        setEditBudget(false);
+      };
+
+      const overTotal = totalSpent > budget.total;
+      const overCats = CATEGORIES.filter(c => catTotals[c] > budget.cats[c]);
+      const historyKeys = Object.keys(allData).sort((a,b)=>b.localeCompare(a)).filter(k=>k!==monthKey);
+
+      return (
+        <div style={{ minHeight:"100vh", background:"#111827", color:"#f9fafb", display:"flex", flexDirection:"column" }}>
+          {/* Header */}
+          <div style={{ background:"#1f2937", padding:"16px 24px", display:"flex", alignItems:"center", justifyContent:"space-between", borderBottom:"1px solid #374151" }}>
+            <div>
+              <div style={{ fontSize:20, fontWeight:700 }}>💰 Budget Tracker</div>
+              <div style={{ fontSize:12, color:"#9ca3af", marginTop:2 }}>
+                Viewing:&nbsp;
+                <select value={monthKey} onChange={e=>setMonthKey(e.target.value)} style={{ background:"#374151", color:"#f9fafb", border:"none", borderRadius:4, padding:"2px 6px", fontSize:12 }}>
+                  {[nowKey(),...historyKeys.slice(0,23)].map(k=><option key={k} value={k}>{keyToLabel(k)}</option>)}
+                </select>
+              </div>
+            </div>
+            <div style={{ display:"flex", gap:8 }}>
+              {["tracker","history"].map(t=>(
+                <button key={t} onClick={()=>setTab(t)} style={{ padding:"6px 16px", borderRadius:8, border:"none", cursor:"pointer", fontWeight:600, fontSize:13, background:tab===t?"#6366f1":"#374151", color:tab===t?"#fff":"#9ca3af" }}>
+                  {t==="tracker"?"📊 Tracker":"🗓 History"}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Warnings */}
+          {tab==="tracker" && (overTotal||overCats.length>0) && (
+            <div style={{ background:"#7f1d1d", borderBottom:"1px solid #991b1b", padding:"10px 24px" }}>
+              {overTotal && <div style={{ fontSize:13, marginBottom:overCats.length?4:0 }}>⚠️ <b>Over total budget!</b> You've spent {fmtMoney(totalSpent)} of your {fmtMoney(budget.total)} budget.</div>}
+              {overCats.map(c=><div key={c} style={{ fontSize:13 }}>⚠️ <b>{c}</b> over limit: {fmtMoney(catTotals[c])} / {fmtMoney(budget.cats[c])}</div>)}
+            </div>
+          )}
+
+          <div style={{ flex:1, display:"flex", overflow:"hidden" }}>
+            {tab==="tracker" ? (
+              <>
+                {/* Left panel */}
+                <div style={{ width:300, minWidth:280, background:"#1f2937", borderRight:"1px solid #374151", padding:20, overflowY:"auto", display:"flex", flexDirection:"column", gap:16 }}>
+                  <div>
+                    <div style={{ fontSize:13, fontWeight:700, color:"#9ca3af", marginBottom:10, textTransform:"uppercase", letterSpacing:1 }}>Add Expense</div>
+                    <input placeholder="Name" value={form.name} onChange={e=>setForm({...form,name:e.target.value})}
+                      style={{ width:"100%", background:"#374151", border:"1px solid #4b5563", borderRadius:8, padding:"8px 10px", color:"#f9fafb", fontSize:13, marginBottom:8 }} />
+                    <input placeholder="Amount (€)" type="number" value={form.amt} onChange={e=>setForm({...form,amt:e.target.value})}
+                      style={{ width:"100%", background:"#374151", border:"1px solid #4b5563", borderRadius:8, padding:"8px 10px", color:"#f9fafb", fontSize:13, marginBottom:8 }} />
+                    <select value={form.cat} onChange={e=>setForm({...form,cat:e.target.value})}
+                      style={{ width:"100%", background:"#374151", border:"1px solid #4b5563", borderRadius:8, padding:"8px 10px", color:"#f9fafb", fontSize:13, marginBottom:10 }}>
+                      {CATEGORIES.map(c=><option key={c}>{c}</option>)}
+                    </select>
+                    <button onClick={addExpense} style={{ width:"100%", background:"#6366f1", color:"#fff", border:"none", borderRadius:8, padding:9, fontWeight:700, fontSize:14, cursor:"pointer" }}>+ Add</button>
+                  </div>
+
+                  <div>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+                      <div style={{ fontSize:13, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:1 }}>Budget Limits</div>
+                      <button onClick={openBudgetEdit} style={{ fontSize:11, background:"#374151", color:"#9ca3af", border:"none", borderRadius:6, padding:"3px 8px", cursor:"pointer" }}>Edit</button>
+                    </div>
+                    <div style={{ fontSize:13, color:"#d1d5db", marginBottom:6 }}>Total: <b style={{color:"#f9fafb"}}>{fmtMoney(budget.total)}</b></div>
+                    {CATEGORIES.map((c,i)=>(
+                      <div key={c} style={{ display:"flex", alignItems:"center", gap:6, marginBottom:4 }}>
+                        <div style={{ width:10, height:10, borderRadius:3, background:CAT_COLORS[i], flexShrink:0 }} />
+                        <div style={{ fontSize:12, color:"#9ca3af", flex:1 }}>{c}</div>
+                        <div style={{ fontSize:12, color:catTotals[c]>budget.cats[c]?"#f87171":"#d1d5db" }}>{fmtMoney(budget.cats[c])}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div>
+                    <div style={{ fontSize:13, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:1, marginBottom:8 }}>Recent Expenses</div>
+                    {expenses.length===0 && <div style={{ fontSize:12, color:"#6b7280" }}>No expenses yet.</div>}
+                    {[...expenses].reverse().map(e=>(
+                      <div key={e.id} style={{ background:"#374151", borderRadius:8, padding:"8px 10px", marginBottom:6, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                        <div>
+                          <div style={{ fontSize:13, fontWeight:600 }}>{e.name}</div>
+                          <div style={{ fontSize:11, color:"#9ca3af" }}>{e.cat} · {e.date}</div>
+                        </div>
+                        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                          <div style={{ fontSize:14, fontWeight:700, color:"#fbbf24" }}>{fmtMoney(e.amt)}</div>
+                          <button onClick={()=>delExpense(e.id)} style={{ background:"none", border:"none", color:"#6b7280", cursor:"pointer", fontSize:16 }}>×</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Main area */}
+                <div style={{ flex:1, padding:24, overflowY:"auto" }}>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:16, marginBottom:24 }}>
+                    {[
+                      { label:"Total Budget", val:fmtMoney(budget.total), sub:"this month", color:"#6366f1" },
+                      { label:"Total Spent", val:fmtMoney(totalSpent), sub:`${Math.round(totalSpent/budget.total*100)||0}% of budget`, color:overTotal?"#ef4444":"#10b981" },
+                      { label:"Remaining", val:fmtMoney(Math.max(0,budget.total-totalSpent)), sub:overTotal?"OVER BUDGET":"left to spend", color:overTotal?"#ef4444":"#f59e0b" },
+                    ].map(c=>(
+                      <div key={c.label} style={{ background:"#1f2937", borderRadius:12, padding:20, borderTop:`3px solid ${c.color}` }}>
+                        <div style={{ fontSize:12, color:"#9ca3af", marginBottom:4 }}>{c.label}</div>
+                        <div style={{ fontSize:26, fontWeight:800, color:c.color }}>{c.val}</div>
+                        <div style={{ fontSize:12, color:"#6b7280", marginTop:2 }}>{c.sub}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{ background:"#1f2937", borderRadius:12, padding:24, display:"flex", gap:32, alignItems:"center", flexWrap:"wrap" }}>
+                    <div style={{ display:"flex", flexDirection:"column", alignItems:"center" }}>
+                      <div style={{ fontSize:14, fontWeight:700, color:"#9ca3af", marginBottom:12, textTransform:"uppercase", letterSpacing:1 }}>Spending Breakdown</div>
+                      <PieChart expenses={expenses} />
+                    </div>
+                    <div style={{ flex:1, minWidth:200 }}>
+                      {CATEGORIES.map((c,i)=>{
+                        const spent = catTotals[c], limit = budget.cats[c];
+                        const pct = Math.min(100, limit>0?Math.round(spent/limit*100):0);
+                        const over = spent > limit;
+                        return (
+                          <div key={c} style={{ marginBottom:12 }}>
+                            <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:3 }}>
+                              <span style={{ display:"flex", alignItems:"center", gap:6 }}>
+                                <span style={{ width:10, height:10, borderRadius:3, background:CAT_COLORS[i], display:"inline-block" }} />{c}
+                              </span>
+                              <span style={{ color:over?"#f87171":"#9ca3af" }}>{fmtMoney(spent)} / {fmtMoney(limit)}</span>
+                            </div>
+                            <div style={{ background:"#374151", borderRadius:99, height:7, overflow:"hidden" }}>
+                              <div style={{ width:`${pct}%`, height:"100%", background:over?"#ef4444":CAT_COLORS[i], borderRadius:99 }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div style={{ flex:1, padding:24, overflowY:"auto" }}>
+                <div style={{ fontSize:18, fontWeight:700, marginBottom:20 }}>🗓 Monthly History</div>
+                {Object.keys(allData).length===0 && <div style={{ color:"#6b7280" }}>No history yet. Start adding expenses!</div>}
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))", gap:16 }}>
+                  {Object.keys(allData).sort((a,b)=>b.localeCompare(a)).map(k=>{
+                    const d = allData[k];
+                    const spent = d.expenses.reduce((s,e)=>s+e.amt,0);
+                    const over = spent > d.budget.total;
+                    return (
+                      <div key={k} onClick={()=>{setMonthKey(k);setTab("tracker");}}
+                        style={{ background:"#1f2937", borderRadius:12, padding:20, cursor:"pointer", borderTop:`3px solid ${over?"#ef4444":"#10b981"}` }}>
+                        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
+                          <div style={{ fontWeight:700, fontSize:15 }}>{keyToLabel(k)}</div>
+                          {k===nowKey()&&<span style={{ fontSize:11, background:"#6366f1", color:"#fff", borderRadius:99, padding:"2px 8px" }}>Current</span>}
+                        </div>
+                        <div style={{ fontSize:22, fontWeight:800, color:over?"#f87171":"#34d399", marginBottom:4 }}>{fmtMoney(spent)}</div>
+                        <div style={{ fontSize:12, color:"#9ca3af", marginBottom:12 }}>of {fmtMoney(d.budget.total)} budget · {d.expenses.length} expenses</div>
+                        <div style={{ background:"#374151", borderRadius:99, height:6 }}>
+                          <div style={{ width:`${Math.min(100,Math.round(spent/d.budget.total*100))}%`, height:"100%", background:over?"#ef4444":"#10b981", borderRadius:99 }} />
+                        </div>
+                        {over&&<div style={{ fontSize:11, color:"#f87171", marginTop:6 }}>⚠️ Over budget by {fmtMoney(spent-d.budget.total)}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Budget edit modal */}
+          {editBudget && budgetDraft && (
+            <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.6)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:100 }}>
+              <div style={{ background:"#1f2937", borderRadius:16, padding:28, width:360, maxHeight:"80vh", overflowY:"auto" }}>
+                <div style={{ fontSize:16, fontWeight:700, marginBottom:16 }}>Edit Budget Limits</div>
+                <div style={{ fontSize:13, color:"#9ca3af", marginBottom:6 }}>Total Monthly Budget (sum of categories)</div>
+                <div style={{ width:"100%", background:"#374151", border:"1px solid #4b5563", borderRadius:8, padding:"8px 10px", color:"#fbbf24", fontSize:14, marginBottom:16, fontWeight:700 }}>
+                  {fmtMoney(CATEGORIES.reduce((s,c)=>s+(budgetDraft.cats[c]||0),0))}
+                </div>
+                <div style={{ fontSize:13, color:"#9ca3af", marginBottom:8 }}>Per Category</div>
+                {CATEGORIES.map((c,i)=>(
+                  <div key={c} style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8 }}>
+                    <div style={{ width:10, height:10, borderRadius:3, background:CAT_COLORS[i] }} />
+                    <div style={{ flex:1, fontSize:13 }}>{c}</div>
+                    <input type="number" value={budgetDraft.cats[c]} onChange={e=>setBudgetDraft({...budgetDraft,cats:{...budgetDraft.cats,[c]:+e.target.value}})}
+                      style={{ width:90, background:"#374151", border:"1px solid #4b5563", borderRadius:8, padding:"6px 8px", color:"#f9fafb", fontSize:13 }} />
+                  </div>
+                ))}
+                <div style={{ display:"flex", gap:10, marginTop:18 }}>
+                  <button onClick={()=>setEditBudget(false)} style={{ flex:1, background:"#374151", color:"#f9fafb", border:"none", borderRadius:8, padding:10, cursor:"pointer", fontWeight:600 }}>Cancel</button>
+                  <button onClick={saveBudget} style={{ flex:1, background:"#6366f1", color:"#fff", border:"none", borderRadius:8, padding:10, cursor:"pointer", fontWeight:700 }}>Save</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
+  </script>
+</body>
+</html>
